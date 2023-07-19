@@ -1,8 +1,7 @@
 terraform {
   required_providers {
     nautobot = {
-      version = "0.0.1-beta"
-      source  = "github.com/nautobot/nautobot"
+      source = "nautobot/nautobot"
     }
   }
 }
@@ -12,7 +11,7 @@ provider "nautobot" {
   token = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
 }
 
-resource "nautobot_manufacturer" "new" {
-  description = "Created with Terraform"
-  name        = "New Vendor"
-}
+// resource "nautobot_manufacturer" "new" {
+//   description = "Created with Terraform"
+//   name        = "New Vendor"
+// }

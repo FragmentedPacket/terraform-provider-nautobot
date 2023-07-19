@@ -2,73 +2,29 @@ package provider
 
 import (
 	"context"
-	"fmt"
+	"os"
 
-	"github.com/hashicorp/terraform-plugin-sdk/v2/diag"
-	"github.com/hashicorp/terraform-plugin-sdk/v2/helper/schema"
-	"github.com/hashicorp/terraform-plugin-sdk/v2/helper/validation"
+	"github.com/hashicorp/terraform-plugin-framework/datasource"
+	"github.com/hashicorp/terraform-plugin-framework/path"
+	"github.com/hashicorp/terraform-plugin-framework/provider"
+	"github.com/hashicorp/terraform-plugin-framework/provider/schema"
+	"github.com/hashicorp/terraform-plugin-framework/resource"
+	"github.com/hashicorp/terraform-plugin-framework/schema/validator"
+	"github.com/hashicorp/terraform-plugin-framework/types"
+	"github.com/hashicorp/terraform-plugin-log/tflog"
 	nb "github.com/nautobot/go-nautobot/pkg/nautobot"
 )
 
-func init() {
-	// Set descriptions to support markdown syntax, this will be used in document generation
-	// and the language server.
-	schema.DescriptionKind = schema.StringMarkdown
-
-	// Customize the content of descriptions when output. For example you can add defaults on
-	// to the exported descriptions if present.
-	// schema.SchemaDescriptionBuilder = func(s *schema.Schema) string {
-	// 	desc := s.Description
-	// 	if s.Default != nil {
-	// 		desc += fmt.Sprintf(" Defaults to `%v`.", s.Default)
-	// 	}
-	// 	return strings.TrimSpace(desc)
-	// }
+type nautobotProvider struct {
 }
 
-func New(version string) func() *schema.Provider {
-	return func() *schema.Provider {
-		p := &schema.Provider{
-			Schema: map[string]*schema.Schema{
-				"url": {
-					Type:     schema.TypeString,
-					Required: true,
-					DefaultFunc: schema.EnvDefaultFunc(
-						"NAUTOBOT_URL",
-						nil,
-					),
-					ValidateFunc: validation.IsURLWithHTTPorHTTPS,
-					Description:  "Nautobot API URL",
-				},
-				"token": {
-					Type:      schema.TypeString,
-					Required:  true,
-					Sensitive: true,
-					DefaultFunc: schema.EnvDefaultFunc(
-						"NAUTOBOT_TOKEN",
-						nil,
-					),
-					Description: "Admin API token",
-				},
-			},
-			DataSourcesMap: map[string]*schema.Resource{
-				"nautobot_manufacturers": dataSourceManufacturers(),
-				"nautobot_graphql":       dataSourceGraphQL(),
-			},
-			ResourcesMap: map[string]*schema.Resource{
-				"nautobot_manufacturer": resourceManufacturer(),
-			},
-		}
-
-		p.ConfigureContextFunc = configure(version, p)
-
-		return p
-	}
+type nautobotProviderModel struct {
+	Url   types.String `tfsdk:"url"`
+	Token types.String `tfsdk:"token"`
 }
 
-// Add whatever fields, client or connection info, etc. here
-// you would need to setup to communicate with the upstream
-// API.
+var _ provider.Provider = &nautobotProvider{}
+
 type apiClient struct {
 	Client     *nb.ClientWithResponses
 	Server     string
@@ -76,50 +32,121 @@ type apiClient struct {
 	BaseClient *nb.Client
 }
 
-func configure(
-	version string,
-	p *schema.Provider,
-) func(context.Context, *schema.ResourceData) (interface{}, diag.Diagnostics) {
-	return func(ctx context.Context, d *schema.ResourceData) (interface{}, diag.Diagnostics) {
-		serverURL := d.Get("url").(string)
-		_, hasToken := d.GetOk("token")
+func New() provider.Provider {
+	return &nautobotProvider{}
+}
 
-		var diags diag.Diagnostics = nil
+func (p *nautobotProvider) Metadata(_ context.Context, _ provider.MetadataRequest, resp *provider.MetadataResponse) {
+	resp.TypeName = "nautobot"
+}
 
-		if !hasToken {
-			diags = diag.FromErr(fmt.Errorf("missing token"))
-			diags[0].Severity = diag.Error
-			return &apiClient{Server: serverURL}, diags
-		}
-
-		token, _ := NewSecurityProviderNautobotToken(
-			d.Get("token").(string),
-		)
-
-		c, err := nb.NewClientWithResponses(
-			serverURL,
-			nb.WithRequestEditorFn(token.Intercept),
-		)
-		if err != nil {
-			diags = diag.FromErr(err)
-			diags[0].Severity = diag.Error
-			return &apiClient{Server: serverURL}, diags
-		}
-		bc, err := nb.NewClient(
-			serverURL,
-			nb.WithRequestEditorFn(token.Intercept),
-		)
-		if err != nil {
-			diags = diag.FromErr(err)
-			diags[0].Severity = diag.Error
-			return &apiClient{Server: serverURL}, diags
-		}
-
-		return &apiClient{
-			Client:     c,
-			Server:     serverURL,
-			Token:      token,
-			BaseClient: bc,
-		}, diags
+func (p *nautobotProvider) Schema(_ context.Context, _ provider.SchemaRequest, resp *provider.SchemaResponse) {
+	resp.Schema = schema.Schema{
+		Attributes: map[string]schema.Attribute{
+			"url": schema.StringAttribute{
+				Optional:   true,
+				Validators: []validator.String{},
+			},
+			"token": schema.StringAttribute{
+				Optional:  true,
+				Sensitive: true,
+			},
+		},
 	}
+}
+
+func (p *nautobotProvider) Configure(ctx context.Context, req provider.ConfigureRequest, resp *provider.ConfigureResponse) {
+	tflog.Info(ctx, "Configuring Nautobot provider.")
+	var config nautobotProviderModel
+	diags := req.Config.Get(ctx, &config)
+	resp.Diagnostics.Append(diags...)
+	if resp.Diagnostics.HasError() {
+		return
+	}
+
+	if config.Url.IsUnknown() {
+		resp.Diagnostics.AddAttributeError(
+			path.Root("url"),
+			"Nautobot URL was not provided.",
+			"The provider cannot create the Nautobot API client as there is an unknown configuration value for the Nautobot API host. "+
+				"Either target apply the source of the value first, set the value statically in the configuration, or use the NAUTOBOT_URL environment variable.",
+		)
+	}
+
+	if config.Token.IsUnknown() {
+		resp.Diagnostics.AddAttributeError(
+			path.Root("token"),
+			"Nautobot Token was not provided - IsUnknown.",
+			"The provider cannot create the Nautobot API client as there is an unknown configuration value for the Nautobot token. "+
+				"Either target apply the source of the value first, set the value statically in the configuration, or use the NAUTOBOT_TOKEN environment variable.",
+		)
+	}
+
+	if resp.Diagnostics.HasError() {
+		return
+	}
+
+	url := os.Getenv("NAUTOBOT_URL")
+	token := os.Getenv("NAUTOBOT_TOKEN")
+
+	if !config.Url.IsNull() {
+		url = config.Url.ValueString()
+	}
+
+	if !config.Token.IsNull() {
+		token = config.Token.ValueString()
+	}
+
+	if url == "" {
+		resp.Diagnostics.AddAttributeError(
+			path.Root("url"),
+			"Nautobot URL was not provided.",
+			"The provider cannot create the Nautobot API client as there is an unknown configuration value for the Nautobot API host. "+
+				"Either target apply the source of the value first, set the value statically in the configuration, or use the NAUTOBOT_URL environment variable.",
+		)
+	}
+
+	if token == "" {
+		resp.Diagnostics.AddAttributeError(
+			path.Root("token"),
+			"Nautobot Token was not provided - is empty string.",
+			"The provider cannot create the Nautobot API client as there is an unknown configuration value for the Nautobot token. "+
+				"Either target apply the source of the value first, set the value statically in the configuration, or use the NAUTOBOT_TOKEN environment variable.",
+		)
+	}
+
+	if resp.Diagnostics.HasError() {
+		return
+	}
+
+	// TODO: We want to check what errors we may get and how to handle them.
+	// It looks like we'd just resp.Diagnostics.AddError and then return if errors same as above.
+	client_token, _ := NewSecurityProviderNautobotToken(token)
+	new_client, _ := nb.NewClientWithResponses(url, nb.WithRequestEditorFn((client_token.Intercept)))
+
+	// ctx = tflog.SetField(ctx, "nautobot_url", url)
+	// tflog.Debug(ctx, "Creating Nautobot client.")
+	bc, _ := nb.NewClient(
+		url,
+		nb.WithRequestEditorFn(client_token.Intercept),
+	)
+
+	client := &apiClient{
+		Client:     new_client,
+		Server:     url,
+		Token:      client_token,
+		BaseClient: bc,
+	}
+	resp.DataSourceData = client
+	resp.ResourceData = client
+}
+
+func (p *nautobotProvider) DataSources(_ context.Context) []func() datasource.DataSource {
+	return []func() datasource.DataSource{
+		NewManufacturersDataSource,
+	}
+}
+
+func (p *nautobotProvider) Resources(_ context.Context) []func() resource.Resource {
+	return nil
 }

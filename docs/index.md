@@ -13,9 +13,16 @@ description: |-
 ## Example Usage
 
 ```terraform
+terraform {
+  required_providers {
+    nautobot = {
+      source = "nautobot/nautobot"
+    }
+  }
+}
 provider "nautobot" {
-  url   = "https://demo.nautobot.com/api/"
-  token = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+  // url   = "https://demo.nautobot.com/api/"
+  // token = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
 }
 ```
 
@@ -24,5 +31,5 @@ provider "nautobot" {
 
 ### Required
 
-- `token` (String, Sensitive) Admin API token
-- `url` (String) Nautobot API URL
+- `token` (String, Sensitive)
+- `url` (String)

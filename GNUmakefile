@@ -28,6 +28,7 @@ release:
 
 install: build
 	mkdir -p $(HOME)/.terraform.d/plugins/${HOSTNAME}/${NAMESPACE}/${NAME}/${VERSION}/${OS_ARCH}
+	cp ${BINARY} ${HOME}/go/bin/
 	mv ${BINARY} $(HOME)/.terraform.d/plugins/${HOSTNAME}/${NAMESPACE}/${NAME}/${VERSION}/${OS_ARCH}
 
 # TODO: no need to generate client, use the one from nautobot/go-nautobot
